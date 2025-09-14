@@ -161,8 +161,14 @@ for (const role of roles) {
 (async () => {
   const browser = await puppeteer.launch({
     headless: false,
+     executablePath: '/snap/bin/chromium', 
     defaultViewport: null,
-    args: ["--start-maximized", "--no-sandbox", "--disable-dev-shm-usage"],
+    args: [  
+      '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-gpu',
+    '--disable-software-rasterizer',],
   });
 
   const page = await browser.newPage();
