@@ -4,7 +4,7 @@ const fs = require("fs");
 const { google } = require("googleapis");
 const path = require("path");
 
-// Constants
+// ==================== CONSTANTS ====================
 const BASE_LINKEDIN_SEARCH = "https://www.linkedin.com/search/results/content/?keywords=";
 const EMAIL_REGEX = /[a-zA-Z0-9]([a-zA-Z0-9._%-]*[a-zA-Z0-9])?@[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?\.[a-zA-Z]{2,}/g;
 const DATE_FILTERS = [
@@ -13,21 +13,34 @@ const DATE_FILTERS = [
   { key: "past-month", label: "month" },
 ];
 
-// Helpers
+// Daily safety cap
+const DAILY_PROFILE_LIMIT = 50;
+
+// User Agents for rotation
+const USER_AGENTS = [
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/118.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (X11; Linux x86_64) Chrome/119.0.0.0 Safari/537.36"
+];
+
+// ==================== HELPERS ====================
+const randomWait = (min = 2000, max = 5000) =>
+  new Promise(resolve => setTimeout(resolve, Math.floor(Math.random() * (max - min + 1)) + min));
+
 const extractEmails = text => (text.match(EMAIL_REGEX) || []).filter(
   email => !email.includes("example.com") && !email.includes("noreply") && !email.includes("test.com")
 );
+
 const extractLinks = text => [...new Set((text.match(/https?:\/\/[^\s<>"{}|\\^`\[\]]+/g) || []))];
 
-// Google Sheets setup
+// ==================== GOOGLE SHEETS ====================
 async function getSheetsClient() {
   const auth = new google.auth.GoogleAuth({
     keyFile: path.join(__dirname, "keys.json"),
     scopes: ["https://www.googleapis.com/auth/spreadsheets"],
   });
   const client = await auth.getClient();
-  const sheets = google.sheets({ version: "v4", auth: client });
-  return sheets;
+  return google.sheets({ version: "v4", auth: client });
 }
 
 async function appendToSheet(data) {
@@ -53,12 +66,12 @@ async function appendToSheet(data) {
   });
 }
 
-// Extract profile information
+// ==================== PROFILE FUNCTIONS ====================
 async function extractProfileInfo(page, profileUrl) {
   try {
-    console.log(`👤 Extracting profile info from: ${profileUrl}`);
+    console.log(`👤 Extracting profile info: ${profileUrl}`);
     await page.goto(profileUrl, { waitUntil: "networkidle2", timeout: 30000 });
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await randomWait(2000, 4000);
 
     return await page.evaluate(() => {
       const getText = selectors => {
@@ -69,36 +82,25 @@ async function extractProfileInfo(page, profileUrl) {
         return "";
       };
       return {
-        name: getText([
-          'h1.text-heading-xlarge',
-          '.pv-text-details__left-panel h1',
-          '.ph5 h1',
-        ]),
-        title: getText([
-          '.text-body-medium.break-words',
-          '.pv-text-details__left-panel .text-body-medium',
-        ]),
-        location: getText([
-          '.text-body-small.inline.t-black--light.break-words',
-          '.pv-text-details__left-panel .text-body-small',
-        ]),
+        name: getText(['h1.text-heading-xlarge', '.pv-text-details__left-panel h1']),
+        title: getText(['.text-body-medium.break-words', '.pv-text-details__left-panel .text-body-medium']),
+        location: getText(['.text-body-small.inline.t-black--light.break-words']),
       };
     });
   } catch (error) {
-    console.warn(`⚠️ Error extracting profile info: ${error.message}`);
+    console.warn(`⚠️ Profile extraction failed: ${error.message}`);
     return { name: "", title: "", location: "" };
   }
 }
 
-// Follow user
 async function followUser(page, profileUrl) {
   try {
-    console.log(`🔄 Attempting to follow: ${profileUrl}`);
+    console.log(`🔄 Following attempt: ${profileUrl}`);
     if (page.url() !== profileUrl) {
       await page.goto(profileUrl, { waitUntil: "networkidle2", timeout: 30000 });
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await randomWait(2000, 4000);
     }
-    const followResult = await page.evaluate(() => {
+    return await page.evaluate(() => {
       const buttons = document.querySelectorAll("button");
       for (const button of buttons) {
         const text = button.innerText?.toLowerCase() || "";
@@ -110,41 +112,34 @@ async function followUser(page, profileUrl) {
       }
       return "no_follow_button";
     });
-    if (followResult === "followed") await new Promise(r => setTimeout(r, 2000));
-    return followResult;
   } catch (error) {
-    console.warn(`⚠️ Error following user: ${error.message}`);
+    console.warn(`⚠️ Follow failed: ${error.message}`);
     return "error";
   }
 }
 
-// Scroll utility
+// ==================== SCROLL ====================
 async function scrollToEnd(page, maxScrolls = 20) {
-  console.log("📜 Scrolling...");
+  console.log("📜 Human-like scrolling...");
   let lastHeight = await page.evaluate(() => document.body.scrollHeight);
-  let sameCount = 0;
-  for (let i = 0; i < maxScrolls && sameCount < 3; i++) {
-    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-    await new Promise(r => setTimeout(r, 3000));
+
+  for (let i = 0; i < maxScrolls; i++) {
+    await page.evaluate(() => {
+      const distance = Math.floor(Math.random() * 500) + 300;
+      window.scrollBy(0, distance);
+    });
+    await randomWait(1000, 4000);
+
     const newHeight = await page.evaluate(() => document.body.scrollHeight);
-    if (newHeight === lastHeight) {
-      sameCount++;
-    } else {
-      sameCount = 0;
-    }
+    if (newHeight === lastHeight) break;
     lastHeight = newHeight;
   }
-  console.log("📜 Done scrolling");
 }
 
-// Roles, Locations, Hashtags
-const roles = [
-  "mern stack developer", "front end developer", "back end developer",
-  "reactjs developer", "nodejs developer", "software engineer",
-  "sde1", "sde2", "full stack developer", "javascript developer", "web developer",
-];
-const locations = ["Noida", "Gurugram", "Delhi", "Bangalore", "Pune", "Hyderabad"];
-const hashtags = ["#hiring", "#jobopening", "#jobs", "#recruitment", "#career", "#developerjobs", "#jobsearch"];
+// ==================== QUERIES ====================
+const roles = ["mern stack developer", "front end developer", "back end developer"];
+const locations = ["Noida", "Gurugram", "Delhi"];
+const hashtags = ["#hiring", "#jobopening", "#jobs"];
 
 const queries = [];
 for (const role of roles) {
@@ -152,28 +147,29 @@ for (const role of roles) {
     for (const tag of hashtags) {
       queries.push(`hiring for ${role} ${loc} ${tag}`);
       queries.push(`${role} job in ${loc} ${tag}`);
-      queries.push(`${role} ${loc} ${tag}`);
-      queries.push(`looking for ${role} ${loc} ${tag}`);
     }
   }
 }
 
+// ==================== MAIN ====================
 (async () => {
   const browser = await puppeteer.launch({
     headless: false,
-     executablePath: '/snap/bin/chromium', 
+    executablePath: '/snap/bin/chromium',
     defaultViewport: null,
-    args: [  
+    args: [
       '--no-sandbox',
-    '--disable-setuid-sandbox',
-    '--disable-dev-shm-usage',
-    '--disable-gpu',
-    '--disable-software-rasterizer',],
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--disable-software-rasterizer',
+    ],
   });
 
   const page = await browser.newPage();
-  await page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+  await page.setUserAgent(USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)]);
 
+  // Login
   console.log("🔐 Logging in...");
   await page.goto("https://www.linkedin.com/login");
   await page.type("#username", process.env.LINKEDIN_EMAIL);
@@ -183,175 +179,62 @@ for (const role of roles) {
 
   const foundEmails = [];
   const processedProfiles = new Set();
-  const totalQueries = queries.length;
 
-  const ENABLE_FOLLOW = process.env.ENABLE_FOLLOW === "true";
-  const EXTRACT_PROFILES = process.env.EXTRACT_PROFILES !== "false";
+  for (let queryIndex = 0; queryIndex < queries.length; queryIndex++) {
+    const query = queries[queryIndex];
+    const encodedQuery = encodeURIComponent(query);
 
-  const BATCH_SIZE = 1;
-  const totalBatches = Math.ceil(totalQueries / BATCH_SIZE);
-
-  for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
-    const batchStart = batchIndex * BATCH_SIZE;
-    const batchEnd = Math.min(batchStart + BATCH_SIZE, totalQueries);
-    const currentBatch = queries.slice(batchStart, batchEnd);
-
-    console.log(`\n🎯 ======= BATCH ${batchIndex + 1}/${totalBatches} =======`);
-
-    for (let i = 0; i < currentBatch.length; i++) {
-      const query = currentBatch[i];
-      const encodedQuery = encodeURIComponent(query);
-
-      for (const filter of DATE_FILTERS) {
-        const searchUrl = `${BASE_LINKEDIN_SEARCH}${encodedQuery}&datePosted=%22${filter.key}%22&origin=FACETED_SEARCH`;
-        console.log(`🔍 Query: "${query}" | Filter: ${filter.label}`);
-
-        try {
-          await page.goto(searchUrl, { waitUntil: "networkidle2", timeout: 60000 });
-          await new Promise(r => setTimeout(r, 2000));
-          await scrollToEnd(page, 55);
-
-          const pageText = await page.evaluate(() => document.body.innerText);
-          const emails = extractEmails(pageText);
-          const links = extractLinks(pageText).filter(l => !l.includes("linkedin.com"));
-
-          emails.forEach(email => {
-            foundEmails.push({
-              email,
-              source: `search_page_${filter.label}`,
-              postUrl: searchUrl,
-              profileLink: "",
-              profileName: "",
-              profileTitle: "",
-              profileLocation: "",
-              followStatus: "",
-              links,
-              postContent: "",
-            });
-          });
-
-          // Extract posts
-          const posts = await page.evaluate(() => {
-            const selectors = [
-              'a[href*="/feed/update"]',
-              'a[href*="/posts/"]',
-              '.feed-shared-update-v2 a[href*="/feed/"]',
-            ];
-            const postLinks = [];
-            selectors.forEach(sel => {
-              document.querySelectorAll(sel).forEach(el => {
-                if (el.href && (el.href.includes("/feed/update") || el.href.includes("/posts/"))) {
-                  postLinks.push(el.href);
-                }
-              });
-            });
-            return [...new Set(postLinks)];
-          });
-
-          const postsToProcess = posts.slice(0, 12);
-
-          for (const url of postsToProcess) {
-            const tab = await browser.newPage();
-            try {
-              await tab.setUserAgent(page.userAgent());
-              await tab.goto(url, { waitUntil: "networkidle2", timeout: 30000 });
-              await new Promise(r => setTimeout(r, 2000));
-
-              const bodyText = await tab.evaluate(() => document.body.innerText);
-              const postContent = await tab.evaluate(() => {
-                const selectors = [
-                  ".feed-shared-update-v2__description",
-                  ".feed-shared-text",
-                  ".feed-shared-update-v2__commentary",
-                ];
-                for (const s of selectors) {
-                  const el = document.querySelector(s);
-                  if (el?.innerText) return el.innerText;
-                }
-                return "";
-              });
-
-              const postEmails = extractEmails(bodyText);
-              const externalLinks = extractLinks(bodyText).filter(l => !l.includes("linkedin.com"));
-
-              const profileLink = await tab.evaluate(() => {
-                const sels = [
-                  "a[href*='/in/'][data-control-name*='actor']",
-                  "a[href*='/in/']:not([href*='/company/'])",
-                  ".feed-shared-actor a[href*='/in/']",
-                ];
-                for (const s of sels) {
-                  const el = document.querySelector(s);
-                  if (el?.href.includes("/in/")) return el.href;
-                }
-                return "";
-              });
-
-              let profileName = "", profileTitle = "", profileLocation = "", followStatus = "";
-              if (profileLink && !processedProfiles.has(profileLink)) {
-                processedProfiles.add(profileLink);
-                if (EXTRACT_PROFILES) {
-                  const p = await extractProfileInfo(tab, profileLink);
-                  profileName = p.name;
-                  profileTitle = p.title;
-                  profileLocation = p.location;
-                }
-                if (ENABLE_FOLLOW) {
-                  followStatus = await followUser(tab, profileLink);
-                  await new Promise(r => setTimeout(r, 3000));
-                }
-              } else if (profileLink) {
-                followStatus = "already_processed";
-              }
-
-              postEmails.forEach(email => {
-                foundEmails.push({
-                  email,
-                  source: `post_${filter.label}`,
-                  postUrl: url,
-                  profileLink,
-                  profileName,
-                  profileTitle,
-                  profileLocation,
-                  followStatus,
-                  links: externalLinks,
-                  postContent: postContent.slice(0, 200),
-                });
-              });
-            } catch (err) {
-              console.warn(`⚠️ Error post ${url}: ${err.message}`);
-            }
-            await tab.close();
-            await new Promise(r => setTimeout(r, 3000));
-          }
-        } catch (err) {
-          console.error(`❌ Error query "${query}" (${filter.label}): ${err.message}`);
-        }
-        await new Promise(r => setTimeout(r, 4000));
-      }
-      await new Promise(r => setTimeout(r, 5000));
+    if (processedProfiles.size >= DAILY_PROFILE_LIMIT) {
+      console.log("🚫 Daily profile cap reached.");
+      break;
     }
 
-    if (foundEmails.length > 0) {
-      console.log(`💾 Saving batch ${batchIndex + 1} (${foundEmails.length} emails)...`);
+    // Take random break every 3 queries
+    if (queryIndex > 0 && queryIndex % 3 === 0) {
+      console.log("😴 Taking a break...");
+      await randomWait(30000, 60000);
+    }
+
+    for (const filter of DATE_FILTERS) {
+      const searchUrl = `${BASE_LINKEDIN_SEARCH}${encodedQuery}&datePosted=%22${filter.key}%22&origin=FACETED_SEARCH`;
+      console.log(`🔍 Searching: "${query}" | Filter: ${filter.label}`);
+
       try {
-        await appendToSheet(foundEmails);
-        console.log("✅ Saved to Google Sheets");
-        foundEmails.length = 0;
+        await page.goto(searchUrl, { waitUntil: "networkidle2", timeout: 60000 });
+        await randomWait(2000, 4000);
+        await scrollToEnd(page, 30);
+
+        const pageText = await page.evaluate(() => document.body.innerText);
+        const emails = extractEmails(pageText);
+        const links = extractLinks(pageText).filter(l => !l.includes("linkedin.com"));
+
+        emails.forEach(email => {
+          foundEmails.push({
+            email,
+            source: `search_page_${filter.label}`,
+            postUrl: searchUrl,
+            profileLink: "",
+            profileName: "",
+            profileTitle: "",
+            profileLocation: "",
+            followStatus: "",
+            links,
+            postContent: "",
+          });
+        });
+
       } catch (err) {
-        console.error(`❌ Error saving batch: ${err.message}`);
+        console.error(`❌ Error query "${query}" (${filter.label}): ${err.message}`);
       }
-    }
-    if (batchIndex < totalBatches - 1) {
-      console.log("⏳ Waiting before next batch...");
-      await new Promise(r => setTimeout(r, 10000));
+      await randomWait(3000, 5000);
     }
   }
 
   if (foundEmails.length > 0) {
     await appendToSheet(foundEmails);
-    console.log("✅ Final save complete");
+    console.log("✅ Data saved to Google Sheets");
   }
-  console.log(`🎯 Total profiles processed: ${processedProfiles.size}`);
+
+  console.log(`🎯 Profiles processed: ${processedProfiles.size}`);
   await browser.close();
 })();
